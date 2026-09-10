@@ -15,10 +15,10 @@ import urllib.parse
 
 import requests
 
-PANEL = os.environ.get("PANEL_URL", "https://panel.host-ship.com").rstrip("/")
+PANEL = (os.environ.get("PANEL_URL") or "https://panel.host-ship.com").rstrip("/")
 USER = os.environ.get("PANEL_USER", "").strip()
 PASS = os.environ.get("PANEL_PASS", "").strip()
-SERVER_IDS = [x.strip() for x in os.environ.get("SERVER_IDS", "3dee8360").split(",") if x.strip()]
+SERVER_IDS = [x.strip() for x in (os.environ.get("SERVER_IDS") or "3dee8360").split(",") if x.strip()]
 TG_TOKEN = os.environ.get("TG_BOT_TOKEN", "").strip()
 TG_CHAT = os.environ.get("TG_CHAT_ID", "").strip()
 DRY_RUN = os.environ.get("DRY_RUN", "").strip().lower() in ("1", "true", "yes")
