@@ -2,8 +2,8 @@ name: Host-Ship 自動續約
 
 on:
   schedule:
-    # 每日 2 次: UTC 04/16 = 北京 12:00/00:00
-    - cron: '0 4,16 * * *'
+    # 每 7 日 1 次 (星期日 UTC 04:00 = 北京 12:00), 唔使太頻
+    - cron: '0 4 * * 0'
   workflow_dispatch:
     inputs:
       dry_run:
