@@ -5,6 +5,12 @@ on:
     # 每日 2 次: UTC 04/16 = 北京 12:00/00:00
     - cron: '0 4,16 * * *'
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (唔真正續約)"
+        required: false
+        default: "false"
+        type: boolean
 
 permissions:
   contents: read
@@ -39,4 +45,5 @@ jobs:
           SERVER_IDS: ${{ secrets.SERVER_IDS }}
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
         run: python renew.py
