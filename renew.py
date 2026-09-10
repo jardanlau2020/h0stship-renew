@@ -69,6 +69,8 @@ def login():
         raise RuntimeError(f"登入未完成: {str(data)[:200]}")
     # 3) 行埋 / 攞齊 session cookie
     s.get(f"{PANEL}/", timeout=20)
+    # 存返最新 XSRF, renew POST 都要帶 (URL-decode 後)
+    s.headers["X-XSRF-TOKEN"] = urllib.parse.unquote(s.cookies.get("XSRF-TOKEN", "") or xsrf)
     log(f"✅ 登入成功: {data.get('user', {}).get('username', '')}")
     return s
 
@@ -81,7 +83,8 @@ def get_server(s, server_id):
 
 
 def renew_server(s, server_id):
-    r = s.post(f"{PANEL}/api/client/servers/{server_id}/renew", timeout=25)
+    r = s.post(f"{PANEL}/api/client/servers/{server_id}/renew", timeout=25,
+               headers={"Referer": f"{PANEL}/server/{server_id}", "Content-Type": "application/json"})
     body = (r.text or "").strip()
     if r.status_code in (200, 204):
         return True, f"✅ 續約成功 (HTTP {r.status_code})"
