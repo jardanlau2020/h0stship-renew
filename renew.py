@@ -9,6 +9,7 @@ Host-Ship (Jexactyl/Pterodactyl 系) 自動續約
 """
 import json
 import os
+import re
 import sys
 import time
 import urllib.parse
@@ -94,6 +95,9 @@ def renew_server(s, server_id):
         detail = json.loads(body)["errors"][0]["detail"] if body else ""
     except Exception:
         detail = body[:200]
+    # 已達上限 30 日 → 唔算失敗, 係「已滿」狀態 (唔使再續)
+    if r.status_code in (400, 422) and "cannot add more than 30 days" in detail.lower():
+        return True, f"⏭️ 已達續期上限 (30 日), 唔使再續 (HTTP {r.status_code})"
     return False, f"❌ 續約失敗 (HTTP {r.status_code}): {detail}"
 
 
@@ -131,7 +135,16 @@ def main():
                 results.append((sid, True, msg))
                 continue
             ok, msg = renew_server(s, sid)
-            log(f"  {msg}")
+            # 面板 CD: "You can renew again in N seconds" → 等完再試 (最多 3 次)
+            for _ in range(3):
+                m = re.search(r"renew again in (\d+) seconds", msg, re.IGNORECASE)
+                if ok or not m:
+                    break
+                wait = min(int(m.group(1)) + 3, 300)
+                log(f"  ⏳ 面板 CD: 等 {wait} 秒再重試...")
+                time.sleep(wait)
+                ok, msg = renew_server(s, sid)
+                log(f"  {msg}")
             if ok:
                 time.sleep(2)
                 attrs2, _ = get_server(s, sid)
