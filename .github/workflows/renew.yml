@@ -1,0 +1,42 @@
+name: Host-Ship 自動續約
+
+on:
+  schedule:
+    # 每日 2 次: UTC 04/16 = 北京 12:00/00:00
+    - cron: '0 4,16 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hostship-renew
+  cancel-in-progress: false
+
+jobs:
+  renew:
+    name: 續約
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: 檢出
+        uses: actions/checkout@v4
+
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 裝 dependencies
+        run: pip install requests
+
+      - name: 執行續約
+        env:
+          PANEL_USER: ${{ secrets.PANEL_USER }}
+          PANEL_PASS: ${{ secrets.PANEL_PASS }}
+          PANEL_URL: ${{ secrets.PANEL_URL }}
+          SERVER_IDS: ${{ secrets.SERVER_IDS }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: python renew.py
