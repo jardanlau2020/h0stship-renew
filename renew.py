@@ -89,28 +89,36 @@ def days_left(v):
 
 
 def build_summary(results):
-    """瘦身版通知: 統計一行 + 每台一行"""
-    n_ok = sum(1 for r in results if r.get("action") in ("renewed", "done"))
-    n_skip = sum(1 for r in results if r.get("action") == "skip")
-    n_bad = sum(1 for r in results if r.get("action") == "failed")
-    lines = ["🎮 Host-Ship 續約 ｜ {} ｜ ✅ {} ｜ ⏭️ {} ｜ ❌ {}".format(
-        now_local(), n_ok, n_skip, n_bad)]
+    """方案 B (極致精簡人話版): 每台精準兩行，徹底消滅頂部計數器"""
+    blocks = []
     for r in results:
-        bits = ["▪️ " + r.get("name", "?")]
+        name = r.get("name", "Host-Ship")
         act = r.get("action")
         exp = fmt_renewal(r.get("expire"))
+        days = days_left(r.get("expire"))
+        rem_str = f"（剩 {days} 天）" if days is not None else ""
+
         if act in ("renewed", "done"):
-            bits.append("✅ 已續期" + (f" → {exp}" if exp else ""))
-        elif act == "skip":
-            bits.append("⏭️ " + (r.get("tag") or "未可續") + (f" · 到期 {exp}" if exp else ""))
-        elif act == "dry":
-            bits.append("🧪 dry-run" + (f" · 到期 {exp}" if exp else ""))
-        else:
-            bits.append("❌ " + (r.get("detail") or "失敗"))
-        lines.append(" · ".join(bits))
-    if n_bad:
-        lines.append("⚠️ 睇 workflow log 排查")
-    return "\n".join(lines)
+            l1 = f"✅ {name} · 成功續期" + (f"至 {exp}" if exp else "")
+            l2 = "ℹ️ " + (f"剩餘 {days} 天 · " if days is not None else "") + "服務已自動展期"
+            blocks.append([l1, l2])
+        elif act == "failed":
+            l1 = f"🚨 {name} · 續期未完成{rem_str}"
+            reason = r.get("detail") or "執行失敗"
+            l2 = f"⚠️ {reason} · 請登入面板手動處理"
+            blocks.append([l1, l2])
+        else: # skip / dry
+            l1 = f"🟢 {name} · 狀態良好{rem_str}"
+            info_parts = []
+            if exp:
+                info_parts.append(f"{exp} 到期")
+            info_parts.append("未到續期窗口")
+            l2 = "ℹ️ " + " · ".join(info_parts)
+            blocks.append([l1, l2])
+
+    if not blocks:
+        return "🟢 Host-Ship · 檢查完成（未發現伺服器實例）"
+    return "\n\n".join("\n".join(b) for b in blocks)
 
 
 def send_tg(text):
