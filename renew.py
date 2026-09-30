@@ -29,6 +29,58 @@ def log(msg):
     print(msg, flush=True)
 
 
+def now_local():
+    """UTC+8 當地時間 MM-DD HH:MM (runner 係 UTC)"""
+    return time.strftime("%m-%d %H:%M", time.gmtime(time.time() + 8 * 3600))
+
+
+def fmt_renewal(v):
+    """renewal 可能係 timestamp(秒/毫秒) 或 ISO/日期字串 → MM-DD HH:MM 或 MM-DD"""
+    if v in (None, "", 0):
+        return ""
+    try:
+        n = float(v)
+        if n > 1e11:
+            n /= 1000.0
+        if n > 1e9:
+            return time.strftime("%m-%d %H:%M", time.gmtime(n + 8 * 3600))
+    except (TypeError, ValueError):
+        pass
+    t = str(v)
+    m = re.match(r"(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})", t)
+    if m:
+        return f"{m.group(2)}-{m.group(3)} {m.group(4)}:{m.group(5)}"
+    m = re.match(r"(\d{4})-(\d{2})-(\d{2})", t)
+    if m:
+        return f"{m.group(2)}-{m.group(3)}"
+    return t[:19]
+
+
+def build_summary(results):
+    """瘦身版通知: 統計一行 + 每台一行"""
+    n_ok = sum(1 for r in results if r.get("action") in ("renewed", "done"))
+    n_skip = sum(1 for r in results if r.get("action") == "skip")
+    n_bad = sum(1 for r in results if r.get("action") == "failed")
+    lines = ["🎮 Host-Ship 續約 ｜ {} ｜ ✅ {} ｜ ⏭️ {} ｜ ❌ {}".format(
+        now_local(), n_ok, n_skip, n_bad)]
+    for r in results:
+        bits = ["▪️ " + r.get("name", "?")]
+        act = r.get("action")
+        exp = fmt_renewal(r.get("expire"))
+        if act in ("renewed", "done"):
+            bits.append("✅ 已續期" + (f" → {exp}" if exp else ""))
+        elif act == "skip":
+            bits.append("⏭️ " + (r.get("tag") or "未可續") + (f" · 到期 {exp}" if exp else ""))
+        elif act == "dry":
+            bits.append("🧪 dry-run" + (f" · 到期 {exp}" if exp else ""))
+        else:
+            bits.append("❌ " + (r.get("detail") or "失敗"))
+        lines.append(" · ".join(bits))
+    if n_bad:
+        lines.append("⚠️ 睇 workflow log 排查")
+    return "\n".join(lines)
+
+
 def send_tg(text):
     if not TG_TOKEN or not TG_CHAT:
         log("(冇設定 TG, 跳過通知)")
@@ -118,21 +170,22 @@ def main():
             attrs, err = get_server(s, sid)
             if err:
                 log(f"  {err}")
-                results.append((sid, False, err))
+                results.append({"name": sid, "action": "failed", "detail": err})
                 continue
             name = attrs.get("name", sid)
             renewable = attrs.get("renewable")
             renewal = attrs.get("renewal")
+            cur = {"name": name, "expire": renewal}
             log(f"  名稱: {name} | renewable={renewable} | renewal={renewal}")
             if not renewable:
                 msg = f"⏭️ 而家唔可以續 (renewable=false, renewal={renewal})"
                 log(f"  {msg}")
-                results.append((sid, True, msg))
+                results.append({**cur, "action": "skip", "tag": "未可續 (renewable=false)"})
                 continue
             if DRY_RUN:
                 msg = "dry-run: 唔真正續約"
                 log(f"  {msg}")
-                results.append((sid, True, msg))
+                results.append({**cur, "action": "dry"})
                 continue
             ok, msg = renew_server(s, sid)
             # 面板 CD: "You can renew again in N seconds" → 等完再試 (最多 3 次)
@@ -145,25 +198,30 @@ def main():
                 time.sleep(wait)
                 ok, msg = renew_server(s, sid)
                 log(f"  {msg}")
+            new_exp = None
+            at_cap = "已達續期上限" in msg or "30 days" in msg
             if ok:
                 time.sleep(2)
                 attrs2, _ = get_server(s, sid)
                 if attrs2:
                     log(f"  續後 renewal: {attrs2.get('renewal')} | renewable: {attrs2.get('renewable')}")
                     msg += f" | 新 renewal={attrs2.get('renewal')}"
-            results.append((sid, ok, msg))
+                    new_exp = attrs2.get("renewal")
+            if ok:
+                results.append({"name": name, "expire": new_exp or renewal, "action": "renewed"})
+            elif at_cap:
+                results.append({"name": name, "expire": renewal, "action": "skip", "tag": "已滿 30 日"})
+            else:
+                results.append({"name": name, "action": "failed",
+                                "detail": re.sub(r"^[❌⏭️]\s*", "", msg)[:120]})
     except Exception as e:
         log(f"💥 錯誤: {e}")
         send_tg(f"🔧 Host-Ship 續約異常: {e}")
         sys.exit(1)
 
-    # 匯總 + 通知
-    lines = ["🎮 Host-Ship 自動續約", ""]
-    all_ok = True
-    for sid, ok, msg in results:
-        lines.append(f"{'✅' if ok else '❌'} {sid}: {msg}")
-        all_ok = all_ok and ok
-    summary = "\n".join(lines)
+    # 匯總 + 通知 (瘦身版)
+    all_ok = all(r.get("action") != "failed" for r in results)
+    summary = build_summary(results)
     log("\n" + summary)
     send_tg(summary)
     sys.exit(0 if all_ok else 1)
