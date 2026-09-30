@@ -3,7 +3,8 @@
 """
 Host-Ship (Jexactyl/Pterodactyl 系) 自動續約
 - 登入: GET /sanctum/csrf-cookie → POST /auth/login (X-XSRF-TOKEN: URL-decode 後)
-- 續期: POST /api/client/servers/{id}/renew
+- 續期: POST /api/client/servers/{id}/renew (面板一次約 +7 日、總上限 30 日
+  → 成功後讀返 renewal，未到頂就隔 10 秒補點，見 renew_until_full())
 - 通知: Telegram
 用法(環境變數): PANEL_USER / PANEL_PASS / SERVER_IDS(逗號分隔) / TG_BOT_TOKEN / TG_CHAT_ID
 """
@@ -23,6 +24,13 @@ SERVER_IDS = [x.strip() for x in (os.environ.get("SERVER_IDS") or "3dee8360").sp
 TG_TOKEN = os.environ.get("TG_BOT_TOKEN", "").strip()
 TG_CHAT = os.environ.get("TG_CHAT_ID", "").strip()
 DRY_RUN = os.environ.get("DRY_RUN", "").strip().lower() in ("1", "true", "yes")
+
+# 續期補點 (面板一次 POST 約 +7 日、總上限 30 日)
+# 成功後讀返 renewal（剩餘日數），未夠 TOPUP_GOAL_DAYS 就隔 TOPUP_INTERVAL_S 再點，
+# 最多補 TOPUP_MAX_EXTRA 次；面板報「已滿」或剩餘日數無進展即停。
+TOPUP_MAX_EXTRA = 3
+TOPUP_INTERVAL_S = 10
+TOPUP_GOAL_DAYS = 28
 
 
 def log(msg):
@@ -54,6 +62,30 @@ def fmt_renewal(v):
     if m:
         return f"{m.group(2)}-{m.group(3)}"
     return t[:19]
+
+
+def days_left(v):
+    """renewal → 約剩幾日 (int)；判斷唔到返 None（保守：唔會亂補點）
+    面板直接俾日數 (e.g. 30) / 秒或毫秒 timestamp / ISO 日期字串都食得住。"""
+    if v in (None, "", 0):
+        return None
+    try:
+        n = float(v)
+    except (TypeError, ValueError):
+        from datetime import datetime
+        m = re.match(r"(\d{4})-(\d{2})-(\d{2})[T ]?(\d{2})?:?(\d{2})?", str(v))
+        if not m:
+            return None
+        try:
+            dt = datetime(*[int(x) if x else 0 for x in m.groups()])
+        except (TypeError, ValueError):
+            return None
+        return int((dt.timestamp() - time.time()) // 86400)
+    if n < 1e6:                 # 面板直接俾「剩幾日」
+        return int(n)
+    if n > 1e11:                # 毫秒 timestamp
+        n /= 1000.0
+    return int((n - time.time()) // 86400)
 
 
 def build_summary(results):
@@ -153,6 +185,66 @@ def renew_server(s, server_id):
     return False, f"❌ 續約失敗 (HTTP {r.status_code}): {detail}"
 
 
+def read_renewal(s, server_id, delay=2):
+    """隔 delay 秒讀返 /api/client/servers/{id}，回傳 renewal（讀唔到返 None）"""
+    time.sleep(delay)
+    attrs, err = get_server(s, server_id)
+    if not attrs:
+        log(f"  ⚠️ 續後讀取失敗: {err}")
+        return None
+    log(f"  續後 renewal: {attrs.get('renewal')} | renewable: {attrs.get('renewable')}")
+    return attrs.get("renewal")
+
+
+def renew_until_full(s, server_id):
+    """首次 POST（連面板 CD 重試），之後剩餘日數未夠 TOPUP_GOAL_DAYS 就補點。
+    返 (ok, msg, new_exp)；ok=False 時 msg 係首次失敗原因（供判「已滿 30 日」）。"""
+    ok, msg = renew_server(s, server_id)
+    log(f"  {msg}")
+    for _ in range(3):          # 面板 CD: "You can renew again in N seconds"
+        m = re.search(r"renew again in (\d+) seconds", msg, re.IGNORECASE)
+        if ok or not m:
+            break
+        wait = min(int(m.group(1)) + 3, 300)
+        log(f"  ⏳ 面板 CD: 等 {wait} 秒再重試...")
+        time.sleep(wait)
+        ok, msg = renew_server(s, server_id)
+        log(f"  {msg}")
+    if not ok:
+        return False, msg, None
+    new_exp = read_renewal(s, server_id)
+    extra, prev_left = 0, None
+    while True:
+        left = days_left(new_exp)
+        if left is None:
+            log("  ⏭️ 剩餘日數讀唔到，唔補點")
+            break
+        if left >= TOPUP_GOAL_DAYS:
+            log(f"  ✅ 剩 {left} 日，已近面板上限 (30 日)")
+            break
+        if prev_left is not None and left <= prev_left:
+            log(f"  ⏭️ 補點後無進展 ({prev_left} → {left})，停")
+            break
+        if extra >= TOPUP_MAX_EXTRA:
+            log(f"  ⏭️ 已補 {extra} 次，停 (剩 {left} 日)")
+            break
+        extra += 1
+        prev_left = left
+        time.sleep(TOPUP_INTERVAL_S)
+        ok2, msg2 = renew_server(s, server_id)
+        log(f"  🔁 補點 {extra}/{TOPUP_MAX_EXTRA}: {msg2}")
+        if not ok2:
+            if "30 days" in msg2 or "已達續期上限" in msg2:
+                log("  ✅ 面板報已滿，當成功")
+            else:
+                log(f"  ⚠️ 補點失敗，收手: {(msg2 or '')[:120]}")
+            break
+        again = read_renewal(s, server_id)
+        if again is not None:
+            new_exp = again
+    return True, msg, new_exp
+
+
 def main():
     if not USER or not PASS:
         log("❌ 缺少 PANEL_USER / PANEL_PASS")
@@ -187,26 +279,10 @@ def main():
                 log(f"  {msg}")
                 results.append({**cur, "action": "dry"})
                 continue
-            ok, msg = renew_server(s, sid)
-            # 面板 CD: "You can renew again in N seconds" → 等完再試 (最多 3 次)
-            for _ in range(3):
-                m = re.search(r"renew again in (\d+) seconds", msg, re.IGNORECASE)
-                if ok or not m:
-                    break
-                wait = min(int(m.group(1)) + 3, 300)
-                log(f"  ⏳ 面板 CD: 等 {wait} 秒再重試...")
-                time.sleep(wait)
-                ok, msg = renew_server(s, sid)
-                log(f"  {msg}")
-            new_exp = None
-            at_cap = "已達續期上限" in msg or "30 days" in msg
-            if ok:
-                time.sleep(2)
-                attrs2, _ = get_server(s, sid)
-                if attrs2:
-                    log(f"  續後 renewal: {attrs2.get('renewal')} | renewable: {attrs2.get('renewable')}")
-                    msg += f" | 新 renewal={attrs2.get('renewal')}"
-                    new_exp = attrs2.get("renewal")
+            ok, msg, new_exp = renew_until_full(s, sid)
+            at_cap = (not ok) and ("已達續期上限" in msg or "30 days" in msg)
+            if ok and new_exp is not None:
+                msg += f" | 新 renewal={new_exp}"
             if ok:
                 results.append({"name": name, "expire": new_exp or renewal, "action": "renewed"})
             elif at_cap:
