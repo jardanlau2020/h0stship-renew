@@ -1,13 +1,13 @@
-name: Host-Ship 自動續約
+name: Host-Ship 自动续约
 
 on:
   schedule:
-    # 每 7 日 1 次 (星期日 UTC 04:00 = 北京 12:00), 唔使太頻
+    # 每 7 日 1 次（周日 UTC 04:00 = 北京 12:00）
     - cron: '0 4 * * 0'
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Dry run (唔真正續約)"
+        description: "Dry run (不真正续约)"
         required: false
         default: "false"
         type: boolean
@@ -21,29 +21,29 @@ concurrency:
 
 jobs:
   renew:
-    name: 續約
+    name: 续约
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
     steps:
-      - name: 檢出
+      - name: 检出
         uses: actions/checkout@v7
 
-      - name: Python
-        uses: actions/setup-python@v7
+      # 迁移说明：原先手写 setup-python / pip install / 执行 三步，
+      # 现改用 renew-kit 的 composite action，自动装好 Python 与 renewkit，
+      # 并在脚本异常退出时兜底发一条 Telegram 通知。
+      # 面板凭据通过本 step 的 env 传入，composite action 会继承。
+      - name: 执行续约
+        uses: jardanlau2020/renew-kit/.github/actions/renew@main
         with:
-          python-version: '3.12'
-
-      - name: 裝 dependencies
-        run: pip install requests
-
-      - name: 執行續約
+          script: renew.py
+          python-version: "3.12"
+          requirements: requirements.txt
         env:
+          PANEL_URL: ${{ secrets.PANEL_URL }}
           PANEL_USER: ${{ secrets.PANEL_USER }}
           PANEL_PASS: ${{ secrets.PANEL_PASS }}
-          PANEL_URL: ${{ secrets.PANEL_URL }}
           SERVER_IDS: ${{ secrets.SERVER_IDS }}
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           DRY_RUN: ${{ github.event.inputs.dry_run }}
-        run: python renew.py
