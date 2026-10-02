@@ -33,11 +33,15 @@ jobs:
       # 现改用 renew-kit 的 composite action，自动装好 Python 与 renewkit，
       # 并在脚本异常退出时兜底发一条 Telegram 通知。
       # 面板凭据通过本 step 的 env 传入，composite action 会继承。
+      # renew-kit 钉在 tag 上（action 与 pip 两处都要钉）：main 上出过一次 composite
+      # action 的语法错（空 then 分支），所有跟 @main 的仓库一起变红 —— 本仓当时
+      # 用的是旧版 action 才侥幸躲过。升级就改这两个 v0.4.2。
       - name: 执行续约
-        uses: jardanlau2020/renew-kit/.github/actions/renew@main
+        uses: jardanlau2020/renew-kit/.github/actions/renew@v0.4.2
         with:
           script: renew.py
           python-version: "3.12"
+          renewkit-ref: v0.4.2
           requirements: requirements.txt
         env:
           PANEL_URL: ${{ secrets.PANEL_URL }}
