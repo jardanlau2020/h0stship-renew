@@ -1,0 +1,30 @@
+# ── Python ────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+
+# ── virtualenv ────────────────────────────────────────────
+.venv/
+venv/
+env/
+
+# ── secrets ───────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.token
+
+# ── tool caches ───────────────────────────────────────────
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ── 运行期产物 ────────────────────────────────────────────
+*.log
+*.png
+latest_logs/
