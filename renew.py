@@ -50,7 +50,27 @@ def log(msg: str) -> None:
 # ---------------------------------------------------------------- 登录
 
 def login():
-    """sanctum/csrf-cookie → POST /auth/login（带 URL-decode 后的 X-XSRF-TOKEN）。"""
+    """優先 cookie 模式（JEXACTYL_SESSION）；否則 sanctum/csrf-cookie → POST /auth/login。"""
+    # ── 2026-10-18：站方開啟 Cloudflare Turnstile，純 API 登入固定回
+    #    400 "Failed to validate the captcha. Please try again."（實測假帳密同一個錯）。
+    #    對策：用戶手動登入面板後，將 jexactyl_session cookie 存入 secret
+    #    JEXACTYL_SESSION，本函數直接帶 cookie 驗證，唔再行登入 API。
+    cookie = env.get("JEXACTYL_SESSION", "")
+    if cookie:
+        s = build_session()
+        s.cookies.set("jexactyl_session", cookie, domain="panel.host-ship.com", path="/")
+        r = request(s, "GET", f"{PANEL}/api/client/account")
+        if r.status_code != 200:
+            raise RuntimeError(
+                f"cookie 模式驗證失敗 → HTTP {r.status_code}: {(r.text or '')[:150]}"
+            )
+        try:
+            who = (r.json().get("attributes") or {}).get("username", "")
+        except Exception:
+            who = ""
+        log(f"✅ cookie 登入成功: {who}")
+        return s
+
     s = build_session()
     r = request(s, "GET", f"{PANEL}/sanctum/csrf-cookie")
     if r.status_code not in (200, 204):
