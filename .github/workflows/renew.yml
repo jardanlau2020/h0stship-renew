@@ -48,6 +48,7 @@ jobs:
           PANEL_USER: ${{ secrets.PANEL_USER }}
           PANEL_PASS: ${{ secrets.PANEL_PASS }}
           SERVER_IDS: ${{ secrets.SERVER_IDS }}
+          JEXACTYL_SESSION: ${{ secrets.JEXACTYL_SESSION }}
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           DRY_RUN: ${{ github.event.inputs.dry_run }}
