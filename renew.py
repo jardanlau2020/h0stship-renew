@@ -106,11 +106,31 @@ def get_server(s, server_id: str):
     return (r.json().get("attributes") or {}), ""
 
 
+def _xsrf_token(s) -> str:
+    """2026-10-25：renew 係 web 路由，要 X-XSRF-TOKEN header（值係 XSRF-TOKEN cookie
+    URL-decode 之後）；冇 cookie 就撈一次面板首頁種返。"""
+    tok = ""
+    try:
+        tok = s.cookies.get("XSRF-TOKEN") or ""
+    except Exception:
+        tok = ""
+    if not tok:
+        try:
+            request(s, "GET", f"{PANEL}/")
+            tok = s.cookies.get("XSRF-TOKEN") or ""
+        except Exception:
+            tok = ""
+    return urllib.parse.unquote(tok) if tok else ""
+
+
 def renew_server(s, server_id: str) -> tuple[Outcome, str]:
     """发一次续期请求，返回 (Outcome, 说明)。"""
     r = request(s, "POST", f"{PANEL}/api/client/servers/{server_id}/renew",
+                json={},
                 headers={"Referer": f"{PANEL}/server/{server_id}",
-                         "Content-Type": "application/json"})
+                         "Content-Type": "application/json",
+                         "X-Requested-With": "XMLHttpRequest",
+                         "X-XSRF-TOKEN": _xsrf_token(s)})
     if r.status_code in (200, 204):
         return Outcome.RENEWED, f"✅ 续约成功 (HTTP {r.status_code})"
 
@@ -120,9 +140,9 @@ def renew_server(s, server_id: str) -> tuple[Outcome, str]:
     except Exception:
         detail = (r.text or "").strip()[:200]
 
-    # 已达上限 30 日 → 不是失败，是「已满」状态
-    if r.status_code in (400, 422) and "cannot add more than 30 days" in detail.lower():
-        return Outcome.ALREADY_MAX, f"⏭️ 已达续期上限 (30 日)，无需再续 (HTTP {r.status_code})"
+    # 已达上限 → 不是失败（站方訊息會寫 30 日或 14 日，兩種都見過）
+    if r.status_code in (400, 422) and re.search(r"cannot add more than \d+ days", detail or "", re.I):
+        return Outcome.ALREADY_MAX, f"⏭️ 已达续期上限（{detail}），无需再续 (HTTP {r.status_code})"
     return Outcome.FAILED, f"❌ 续约失败 (HTTP {r.status_code}): {detail}"
 
 
